@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
-	"strings"
+	// "net/url"
+	// "strings"
+	"io"
+	"encoding/json"
 	"time"
+	"bytes"
 
 	"github.com/buger/jsonparser"
 	"github.com/nyaruka/courier"
@@ -15,7 +18,7 @@ import (
 )
 
 
-var sendURL = "https://premium.mista.io/api/v3"
+var sendURL = "https://premium.mista.io/api/v3/sms/send"
 
 func init() {
 	courier.RegisterHandler(newHandler())
@@ -30,11 +33,11 @@ func newHandler() courier.ChannelHandler {
 }
 
 type moForm struct {
-	ID   string `validate:"required" name:"id"`
-	Text string `validate:"required" name:"text"`
-	From string `validate:"required" name:"from"`
-	To   string `validate:"required" name:"to"`
-	Date string `validate:"required" name:"date"`
+	ID   string `json:validate:"required" name:"id"`
+	Text string `json:validate:"required" name:"text"`
+	From string `json:validate:"required" name:"from"`
+	To   string `json:validate:"required" name:"to"`
+	Date string `json:validate:"required" name:"date"`
 }
 
 // Initialize is called by the engine once everything is loaded
@@ -119,26 +122,45 @@ func (h *handler) SendMsg(_ context.Context, msg courier.Msg) (courier.MsgStatus
 
 	
 
-	apiKey := msg.Channel().StringConfigForKey(courier.ConfigAPIKey, "")
+	apiKey := "Bearer" + " " + msg.Channel().StringConfigForKey(courier.ConfigAPIKey, "")
 	if apiKey == "" {
 		return nil, fmt.Errorf("no API key set for Mista channel")
 	}
 
-	// build our request
-	form := url.Values{
+	type RequestParams struct {
+		REC           string   `json:"recipient"`
+		SENDER        string   `json:"sender_id"`
+		MSG           string   `json:"message"`
+		TYPE          string   `json:"type"`
 		
-		"to":       []string{msg.URN().Path()},
-		"message":  []string{handlers.GetTextAndAttachments(msg)},
 	}
 
+	// build our request
+	form := RequestParams{
+		
+		REC:       msg.URN().Path(),
+		SENDER:       msg.Channel().Address(),
+		MSG:  handlers.GetTextAndAttachments(msg),
+		TYPE   :  "plain",
+	
 
-	req, err := http.NewRequest(http.MethodPost, sendURL, strings.NewReader(form.Encode()))
+	}
+    
+    var body io.Reader
+
+	marshalled, err := json.Marshal(form)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	body = bytes.NewReader(marshalled)
+	sendMethod := http.MethodPost
+
+	req, err := http.NewRequest(sendMethod, sendURL, body)
+	if err != nil {
+		return nil, err
+	}	
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("apikey", apiKey)
+	req.Header.Set("Authorization", apiKey)
 
 	rr, err := utils.MakeHTTPRequest(req)
 
@@ -150,14 +172,14 @@ func (h *handler) SendMsg(_ context.Context, msg courier.Msg) (courier.MsgStatus
 	}
 
 	// was this request successful?
-	msgStatus, _ := jsonparser.GetString([]byte(rr.Body), "SMSMessageData", "Recipients", "[0]", "status")
-	if msgStatus != "Success" {
+	msgStatus, _ := jsonparser.GetString([]byte(rr.Body), "data", "status")
+	if msgStatus != "Delivered" {
 		status.SetStatus(courier.MsgErrored)
 		return status, nil
 	}
 
 	// grab the external id if we can
-	externalID, _ := jsonparser.GetString([]byte(rr.Body), "SMSMessageData", "Recipients", "[0]", "messageId")
+	externalID, _ := jsonparser.GetString([]byte(rr.Body), "data", "uid")
 	status.SetStatus(courier.MsgWired)
 	status.SetExternalID(externalID)
 
