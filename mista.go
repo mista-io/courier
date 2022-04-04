@@ -131,10 +131,7 @@ func (h *handler) SendMsg(_ context.Context, msg courier.Msg) (courier.MsgStatus
 		"message":  []string{handlers.GetTextAndAttachments(msg)},
 	}
 
-	// if this isn't shared, include our from
-	if !isShared {
-		form["from"] = []string{msg.Channel().Address()}
-	}
+	
 
 	req, err := http.NewRequest(http.MethodPost, sendURL, strings.NewReader(form.Encode()))
 	if err != nil {
