@@ -18,7 +18,7 @@ import (
 )
 
 
-var sendURL = "https://premium.mista.io/api/v3/sms/send"
+var sendURL = "https://api.mista.io/sms"
 
 func init() {
 	courier.RegisterHandler(newHandler())
