@@ -114,13 +114,14 @@ func (h *handler) receiveStatus(ctx context.Context, channel courier.Channel, w 
 	status := h.Backend().NewMsgStatusForExternalID(channel, form.ID, msgStatus)
 	return handlers.WriteMsgStatusAndResponse(ctx, h, channel, status, w, r)
 }
-
 // SendMsg sends the passed-in message, returning any error
 func (h *handler) SendMsg(ctx context.Context, msg courier.Msg) (courier.MsgStatus, error) {
 	apiKey := "Bearer " + msg.Channel().StringConfigForKey(courier.ConfigAPIKey, "")
 	if apiKey == "" {
 		return nil, fmt.Errorf("no API key set for Mista channel")
 	}
+
+	sendURL := "https://api.mista.io/sms" // Set the correct URL for sending SMS
 
 	type RequestParams struct {
 		Recipient string `json:"recipient"`
@@ -143,7 +144,6 @@ func (h *handler) SendMsg(ctx context.Context, msg courier.Msg) (courier.MsgStat
 	}
 
 	body := bytes.NewReader(marshalled)
-	sendURL := "https://api.mista.io/sms" // Set the correct URL for sending SMS
 
 	req, err := http.NewRequest(http.MethodPost, sendURL, body)
 	if err != nil {
@@ -193,3 +193,4 @@ func (h *handler) SendMsg(ctx context.Context, msg courier.Msg) (courier.MsgStat
 
 	return status, nil
 }
+
