@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"time"
 	"bytes"
-	"fmt"
 
 	"github.com/buger/jsonparser"
 	"github.com/nyaruka/courier"
