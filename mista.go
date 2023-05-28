@@ -1,22 +1,17 @@
 package mista
 
 import (
-	"context"
-	"fmt"
-	"net/http"
-	// "net/url"
-	// "strings"
-	"io"
-	"encoding/json"
-	"time"
 	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"net/http"
+	"time"
 
-	"github.com/buger/jsonparser"
 	"github.com/nyaruka/courier"
 	"github.com/nyaruka/courier/handlers"
-	"github.com/nyaruka/courier/utils"
 )
-
 
 var sendURL = "https://api.mista.io/sms"
 
@@ -33,19 +28,17 @@ func newHandler() courier.ChannelHandler {
 }
 
 type moForm struct {
-	ID   string `json:validate:"required" name:"id"`
-	Text string `json:validate:"required" name:"text"`
-	From string `json:validate:"required" name:"from"`
-	To   string `json:validate:"required" name:"to"`
-	Date string `json:validate:"required" name:"date"`
+	ID   string `name:"id"`
+	Body string `validate:"required" name:"body"`
+	From string `validate:"required" name:"from"`
+	To   string `validate:"required" name:"to"`
+	Date string `name:"date"`
 }
 
 // Initialize is called by the engine once everything is loaded
 func (h *handler) Initialize(s courier.Server) error {
 	h.SetServer(s)
 	s.AddHandlerRoute(h, http.MethodPost, "receive", h.receiveMessage)
-	s.AddHandlerRoute(h, http.MethodPost, "callback", h.receiveMessage)
-	s.AddHandlerRoute(h, http.MethodPost, "delivery", h.receiveStatus)
 	s.AddHandlerRoute(h, http.MethodPost, "status", h.receiveStatus)
 	return nil
 }
@@ -53,22 +46,26 @@ func (h *handler) Initialize(s courier.Server) error {
 // receiveMessage is our HTTP handler function for incoming messages
 func (h *handler) receiveMessage(ctx context.Context, channel courier.Channel, w http.ResponseWriter, r *http.Request) ([]courier.Event, error) {
 	// get our params
-	fmt.Println("Reached#####")
 	form := &moForm{}
 	err := handlers.DecodeAndValidateForm(form, r)
 	if err != nil {
 		return nil, handlers.WriteAndLogRequestError(ctx, h, channel, w, r, err)
 	}
 
-	// create our date from the timestamp
-	// 2017-05-03T06:04:45Z
-	date, err := time.Parse("2006-01-02T15:04:05Z", form.Date)
-	if err != nil {
-		date, err = time.Parse("2006-01-02 15:04:05", form.Date)
+	fmt.Printf("Received date: %s\n", form.Date) // Print the received date for debugging purposes
+
+	// Parse the date string
+	var date time.Time
+	if form.Date != "" {
+		parsedTime, err := time.Parse(time.RFC3339, form.Date)
 		if err != nil {
-			return nil, handlers.WriteAndLogRequestError(ctx, h, channel, w, r, fmt.Errorf("invalid date format: %s", form.Date))
+			parsedTime, err = time.Parse("2006-01-02T15:04:05Z", form.Date)
+			if err != nil {
+				return nil, handlers.WriteAndLogRequestError(ctx, h, channel, w, r, fmt.Errorf("invalid date format: %s", form.Date))
+			}
 		}
-		date = date.UTC()
+		// Convert to UTC
+		date = parsedTime.UTC()
 	}
 
 	// create our URN
@@ -76,8 +73,9 @@ func (h *handler) receiveMessage(ctx context.Context, channel courier.Channel, w
 	if err != nil {
 		return nil, handlers.WriteAndLogRequestError(ctx, h, channel, w, r, err)
 	}
+
 	// build our msg
-	msg := h.Backend().NewIncomingMsg(channel, urn, form.Text).WithExternalID(form.ID).WithReceivedOn(date)
+	msg := h.Backend().NewIncomingMsg(channel, urn, form.Body).WithExternalID(form.ID).WithReceivedOn(date)
 
 	// and finally write our message
 	return handlers.WriteMsgsAndResponse(ctx, h, []courier.Msg{msg}, w, r)
@@ -117,6 +115,7 @@ func (h *handler) receiveStatus(ctx context.Context, channel courier.Channel, w 
 	return handlers.WriteMsgStatusAndResponse(ctx, h, channel, status, w, r)
 }
 
+// SendMsg sends the passed-in message, returning any error
 func (h *handler) SendMsg(ctx context.Context, msg courier.Msg) (courier.MsgStatus, error) {
 	apiKey := "Bearer " + msg.Channel().StringConfigForKey(courier.ConfigAPIKey, "")
 	if apiKey == "" {
@@ -132,8 +131,8 @@ func (h *handler) SendMsg(ctx context.Context, msg courier.Msg) (courier.MsgStat
 
 	// Build our request
 	form := RequestParams{
-		Recipient: msg.Channel().Address(),
-		SenderID:  msg.Channel().StringConfigForKey(courier.ConfigSenderID, ""),
+		Recipient: msg.URN().Path(),
+		SenderID:  msg.Channel().Address(),
 		Message:   msg.Text(),
 		Type:      "plain",
 	}
@@ -194,4 +193,3 @@ func (h *handler) SendMsg(ctx context.Context, msg courier.Msg) (courier.MsgStat
 
 	return status, nil
 }
-
