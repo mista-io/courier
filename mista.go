@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"time"
 	"bytes"
+	"fmt"
 
 	"github.com/buger/jsonparser"
 	"github.com/nyaruka/courier"
@@ -53,6 +54,7 @@ func (h *handler) Initialize(s courier.Server) error {
 // receiveMessage is our HTTP handler function for incoming messages
 func (h *handler) receiveMessage(ctx context.Context, channel courier.Channel, w http.ResponseWriter, r *http.Request) ([]courier.Event, error) {
 	// get our params
+	fmt.Println("Reached#####")
 	form := &moForm{}
 	err := handlers.DecodeAndValidateForm(form, r)
 	if err != nil {
