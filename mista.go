@@ -117,72 +117,81 @@ func (h *handler) receiveStatus(ctx context.Context, channel courier.Channel, w 
 	return handlers.WriteMsgStatusAndResponse(ctx, h, channel, status, w, r)
 }
 
-// SendMsg sends the passed in message, returning any error
-func (h *handler) SendMsg(_ context.Context, msg courier.Msg) (courier.MsgStatus, error) {
-	
-
-	
-
-	apiKey := "Bearer" + " " + msg.Channel().StringConfigForKey(courier.ConfigAPIKey, "")
+func (h *handler) SendMsg(ctx context.Context, msg courier.Msg) (courier.MsgStatus, error) {
+	apiKey := "Bearer " + msg.Channel().StringConfigForKey(courier.ConfigAPIKey, "")
 	if apiKey == "" {
 		return nil, fmt.Errorf("no API key set for Mista channel")
 	}
 
 	type RequestParams struct {
-		REC           string   `json:"recipient"`
-		SENDER        string   `json:"sender_id"`
-		MSG           string   `json:"message"`
-		TYPE          string   `json:"type"`
-		
+		Recipient string `json:"recipient"`
+		SenderID  string `json:"sender_id"`
+		Message   string `json:"message"`
+		Type      string `json:"type"`
 	}
 
-	// build our request
+	// Build our request
 	form := RequestParams{
-		
-		REC:       msg.URN().Path(),
-		SENDER:       msg.Channel().Address(),
-		MSG:  handlers.GetTextAndAttachments(msg),
-		TYPE   :  "plain",
-	
-
+		Recipient: msg.Channel().Address(),
+		SenderID:  msg.Channel().StringConfigForKey(courier.ConfigSenderID, ""),
+		Message:   msg.Text(),
+		Type:      "plain",
 	}
-    
-    var body io.Reader
 
 	marshalled, err := json.Marshal(form)
 	if err != nil {
 		return nil, err
 	}
-	body = bytes.NewReader(marshalled)
-	sendMethod := http.MethodPost
 
-	req, err := http.NewRequest(sendMethod, sendURL, body)
+	body := bytes.NewReader(marshalled)
+	sendURL := "https://api.mista.io/sms" // Set the correct URL for sending SMS
+
+	req, err := http.NewRequest(http.MethodPost, sendURL, body)
 	if err != nil {
 		return nil, err
-	}	
+	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", apiKey)
 
-	rr, err := utils.MakeHTTPRequest(req)
-
-	// record our status and log
-	status := h.Backend().NewMsgStatusForID(msg.Channel(), msg.ID(), courier.MsgErrored)
-	status.AddLog(courier.NewChannelLogFromRR("Message Sent", msg.Channel(), msg.ID(), rr).WithError("Message Send Error", err))
+	client := http.DefaultClient
+	resp, err := client.Do(req)
 	if err != nil {
-		return status, nil
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// Read the response body
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
 	}
 
-	// was this request successful?
-	msgStatus, _ := jsonparser.GetString([]byte(rr.Body), "data", "status")
-	if msgStatus != "Delivered" {
+	// Check the response status code
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("SMS request failed with status code: %d", resp.StatusCode)
+	}
+
+	// Parse the response body to extract the necessary information
+	var responseData struct {
+		Status string `json:"status"`
+		UID    string `json:"uid"`
+	}
+
+	err = json.Unmarshal(respBody, &responseData)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create the message status based on the response data
+	status := h.Backend().NewMsgStatusForID(msg.Channel(), msg.ID(), courier.MsgErrored)
+	if responseData.Status == "Delivered" {
+		status.SetStatus(courier.MsgWired)
+		status.SetExternalID(responseData.UID)
+	} else {
 		status.SetStatus(courier.MsgErrored)
-		return status, nil
 	}
-
-	// grab the external id if we can
-	externalID, _ := jsonparser.GetString([]byte(rr.Body), "data", "uid")
-	status.SetStatus(courier.MsgWired)
-	status.SetExternalID(externalID)
 
 	return status, nil
 }
+
