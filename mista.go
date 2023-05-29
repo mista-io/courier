@@ -157,7 +157,16 @@ func (h *handler) SendMsg(ctx context.Context, msg courier.Msg) (courier.MsgStat
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if resp != nil {
+			resp.Body.Close()
+		}
+	}()
+
+	// Check if the response is nil
+	if resp == nil {
+		return nil, errors.New("nil response received")
+	}
 
 	// Read the response body
 	respBody, err := ioutil.ReadAll(resp.Body)
@@ -170,6 +179,10 @@ func (h *handler) SendMsg(ctx context.Context, msg courier.Msg) (courier.MsgStat
 		return nil, fmt.Errorf("SMS request failed with status code: %d", resp.StatusCode)
 	}
 
+	// record our status and log the error
+	status := h.Backend().NewMsgStatusForID(msg.Channel(), msg.ID(), courier.MsgErrored)
+	status.AddLog(courier.NewChannelLogFromRR("Message Sent", msg.Channel(), msg.ID(), nil).WithError("Message Send Error", err))
+
 	// Parse the response body to extract the necessary information
 	var responseData struct {
 		Status string `json:"status"`
@@ -178,17 +191,12 @@ func (h *handler) SendMsg(ctx context.Context, msg courier.Msg) (courier.MsgStat
 
 	err = json.Unmarshal(respBody, &responseData)
 	if err != nil {
-		return nil, err
+		return status, nil
 	}
 
 	// Create the message status based on the response data
-	status := h.Backend().NewMsgStatusForID(msg.Channel(), msg.ID(), courier.MsgErrored)
-	if responseData.Status == "Delivered" {
-		status.SetStatus(courier.MsgWired)
-		status.SetExternalID(responseData.UID)
-	} else {
-		status.SetStatus(courier.MsgErrored)
-	}
+	status.SetStatus(courier.MsgWired)
+	status.SetExternalID(responseData.UID)
 
 	return status, nil
 }
