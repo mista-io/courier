@@ -8,6 +8,8 @@ import (
 	"io/ioutil"
 	"net/http"
 	"time"
+	"errors"
+
 
 	"github.com/nyaruka/courier"
 	"github.com/nyaruka/courier/handlers"
